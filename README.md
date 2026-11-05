@@ -21,7 +21,7 @@
 3. Добавьте ссылку на плагин:
 
    ```text
-   https://cdn.jsdelivr.net/gh/danilvoe/lampa_plugin_cutflix@c3a0846/cutflix.js
+   https://cdn.jsdelivr.net/gh/danilvoe/lampa_plugin_cutflix@a53ac00/cutflix.js
    ```
 
    Адрес с `@main` может отдавать старую версию из кэша CDN до 12 часов.
@@ -31,7 +31,7 @@
    https://testingcf.jsdelivr.net/gh/danilvoe/lampa_plugin_cutflix@main/cutflix.js
    ```
 
-   При обновлении плагина замените хэш `c3a0846` в адресе на хэш нового
+   При обновлении плагина замените хэш `a53ac00` в адресе на хэш нового
    коммита.
 
    Ссылка `raw.githubusercontent.com` может не работать в современных
@@ -63,9 +63,9 @@ MediaStation X) на время просмотра Cutflix плагин пере
 встроенный плеер и возвращает прежнюю настройку после закрытия.
 
 Если в логе Lampa есть строка `[Cutflix] quality off <платформа> <плеер>`,
-значит WebView устройства не поддерживает MSE и качеством управляет
-системный плеер — в этом случае используйте приложение Lampa для Android TV
-или внешний плеер.
+значит программный HLS недоступен (WebView без MSE или выбран внешний
+плеер), и качеством управляет системный плеер. В этом случае используйте
+приложение Lampa для Android TV или внешний плеер.
 
 Если изменения в плагине не применяются, сбросьте кэш CDN и Lampa —
 см. раздел «Сброс кэша».
@@ -87,10 +87,10 @@ MediaStation X) на время просмотра Cutflix плагин пере
    привязанный к коммиту:
 
    ```text
-   https://cdn.jsdelivr.net/gh/danilvoe/lampa_plugin_cutflix@c3a0846/cutflix.js
+   https://cdn.jsdelivr.net/gh/danilvoe/lampa_plugin_cutflix@a53ac00/cutflix.js
    ```
 
-   Такой адрес всегда отдаёт указанную версию. Хэш `c3a0846` можно
+   Такой адрес всегда отдаёт указанную версию. Хэш `a53ac00` можно
    заменить на хэш более нового коммита.
 
 3. В Lampa откройте **Настройки → Расширения**, удалите старый адрес
