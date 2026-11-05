@@ -50,34 +50,6 @@
         }
     }
 
-    function rewritePlaylist(text, playlistUrl) {
-        return String(text).replace(/\r/g, '').split('\n').map(function (line) {
-            if (!line.trim()) return '';
-
-            if (line.charAt(0) === '#') {
-                return line.replace(/URI="([^"]*)"/g, function (all, uri) {
-                    return 'URI="' + absoluteUrl(playlistUrl, uri) + '"';
-                });
-            }
-
-            return absoluteUrl(playlistUrl, line);
-        }).join('\n');
-    }
-
-    function makePlaylistBlob(text) {
-        try {
-            if (typeof URL === 'undefined' || typeof Blob === 'undefined' || !URL.createObjectURL) return '';
-
-            var blob = new Blob([text], {
-                type: 'application/vnd.apple.mpegurl'
-            });
-
-            return URL.createObjectURL(blob);
-        } catch (e) {
-            return '';
-        }
-    }
-
     function playbackNetwork() {
         if (!playback_network) {
             playback_network = new Lampa.Reguest();
@@ -85,6 +57,80 @@
         }
 
         return playback_network;
+    }
+
+    function warmPlaylistUrl(url) {
+        if (!url || url.indexOf('http') !== 0) return;
+
+        playbackNetwork().silent(url, function () {}, function () {}, false, {
+            headers: {
+                'Accept': '*/*'
+            },
+            dataType: 'text',
+            timeout: 20000
+        });
+    }
+
+    function preheatPlaylist(videoId, text) {
+        var base = streamUrl(videoId);
+        var target = Number(Lampa.Storage.field('video_quality_default')) || 0;
+        var variants = [];
+        var audioUri = '';
+        var waiting = null;
+
+        String(text).replace(/\r/g, '').split('\n').forEach(function (line) {
+            line = line.trim();
+
+            if (!line) return;
+
+            if (line.charAt(0) === '#') {
+                if (line.indexOf('#EXT-X-STREAM-INF:') === 0) {
+                    var match = line.match(/RESOLUTION=(\d+)x(\d+)/);
+
+                    waiting = {
+                        height: match ? parseInt(match[2], 10) : 0,
+                        uri: ''
+                    };
+
+                    variants.push(waiting);
+                } else if (line.indexOf('#EXT-X-MEDIA:') === 0
+                    && line.indexOf('TYPE=AUDIO') !== -1
+                    && line.indexOf('DEFAULT=YES') !== -1) {
+                    var audio = line.match(/URI="([^"]*)"/);
+
+                    audioUri = audio ? absoluteUrl(base, audio[1]) : '';
+                }
+
+                return;
+            }
+
+            if (waiting) {
+                waiting.uri = absoluteUrl(base, line);
+
+                waiting = null;
+            }
+        });
+
+        warmPlaylistUrl(audioUri);
+
+        var best = null;
+
+        variants.forEach(function (variant) {
+            if (!variant.uri) return;
+
+            if (!best) {
+                best = variant;
+                return;
+            }
+
+            if (!target) {
+                if (variant.height > best.height) best = variant;
+            } else if (Math.abs(variant.height - target) < Math.abs(best.height - target)) {
+                best = variant;
+            }
+        });
+
+        if (best) warmPlaylistUrl(best.uri);
     }
 
     function loadMasterManifest(videoId, success, error) {
@@ -216,22 +262,13 @@
         } else delete entry.force_inner;
 
         loadMasterManifest(entry.video_id, function (text) {
-            var rewritten = rewritePlaylist(text, streamUrl(entry.video_id));
-            var blob = makePlaylistBlob(rewritten);
+            preheatPlaylist(entry.video_id, text);
 
-            if (blob) {
-                console.log('Cutflix', 'master playlist served as local blob');
+            console.log('Cutflix', 'master playlist preloaded');
 
-                entry.master_url = blob;
-
-                finish(blob);
-            } else {
-                console.log('Cutflix', 'master rewrite unavailable, using source url');
-
-                finish(original);
-            }
+            finish(original);
         }, function () {
-            console.log('Cutflix', 'master prefetch failed, using source url');
+            console.log('Cutflix', 'master preload failed, using direct url');
 
             finish(original);
         });
