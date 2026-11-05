@@ -10,6 +10,8 @@
     var HLS_TYPE = 'hlsjs';
     var cache = {};
     var added = false;
+    var qualityNetwork = null;
+    var qualitySession = 0;
 
     var ICON = '<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M4 5.5C4 4.67157 4.67157 4 5.5 4H18.5C19.3284 4 20 4.67157 20 5.5V18.5C20 19.3284 19.3284 20 18.5 20H5.5C4.67157 20 4 19.3284 4 18.5V5.5Z" stroke="currentColor" stroke-width="1.7"/><path d="M8 4V20M16 4V20M4 9H8M4 15H8M16 9H20M16 15H20" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>';
 
@@ -42,6 +44,158 @@
             timeline: timeline,
             hls_type: HLS_TYPE
         };
+    }
+
+    function absoluteUrl(base, uri) {
+        try {
+            return new URL(uri, base).href;
+        } catch (e) {
+            if (/^https?:\/\//i.test(uri)) return uri;
+            var clean = String(base).split('?')[0].split('#')[0];
+            return clean.substring(0, clean.lastIndexOf('/') + 1) + uri;
+        }
+    }
+
+    function fixMediaLine(line, base) {
+        return line.replace(/URI="([^"]*)"/, function (all, uri) {
+            return 'URI="' + absoluteUrl(base, uri) + '"';
+        });
+    }
+
+    function encodeBase64(text) {
+        if (Lampa.Base64 && Lampa.Base64.encode) return Lampa.Base64.encode(text);
+        return btoa(unescape(encodeURIComponent(text)));
+    }
+
+    function qualityMapFromMaster(text, masterUrl) {
+        var lines = String(text || '').replace(/\r/g, '').split('\n');
+        var variants = [];
+        var medias = [];
+        var head = [];
+
+        for (var i = 0; i < lines.length; i++) {
+            var line = lines[i].trim();
+            if (!line) continue;
+
+            if (line.indexOf('#EXT-X-STREAM-INF:') === 0) {
+                var attrs = line.substring('#EXT-X-STREAM-INF:'.length).trim();
+                var uri = '';
+
+                for (var j = i + 1; j < lines.length; j++) {
+                    var next = lines[j].trim();
+                    if (!next) continue;
+                    if (next.charAt(0) !== '#') {
+                        uri = next;
+                        i = j;
+                    }
+                    break;
+                }
+
+                if (uri) variants.push({
+                    attrs: attrs,
+                    uri: absoluteUrl(masterUrl, uri)
+                });
+            } else if (line.indexOf('#EXT-X-MEDIA:') === 0) {
+                medias.push(fixMediaLine(line, masterUrl));
+            } else if (line === '#EXT-X-INDEPENDENT-SEGMENTS' || line.indexOf('#EXT-X-VERSION:') === 0) {
+                head.push(line);
+            }
+        }
+
+        var quality = {};
+
+        for (var v = 0; v < variants.length; v++) {
+            var resolution = /RESOLUTION=\d+x(\d+)/i.exec(variants[v].attrs);
+            var name = /NAME="([^"]+)"/i.exec(variants[v].attrs);
+            var height = resolution ? parseInt(resolution[1], 10) : 0;
+            var key = height ? height + 'p' : name ? name[1] + 'p' : '';
+
+            if (!key || quality[key]) continue;
+
+            var master = ['#EXTM3U']
+                .concat(head)
+                .concat(['#EXT-X-STREAM-INF:' + variants[v].attrs, variants[v].uri])
+                .concat(medias)
+                .join('\n') + '\n';
+
+            quality[key] = 'data:application/vnd.apple.mpegurl;base64,' + encodeBase64(master) + '#.m3u8';
+        }
+
+        return Object.keys(quality).length > 1 ? quality : null;
+    }
+
+    function canUseProgramHls() {
+        try {
+            return typeof Hls !== 'undefined' && Hls.isSupported && Hls.isSupported();
+        } catch (e) {
+            return false;
+        }
+    }
+
+    function isCutflixStream(url) {
+        return /\/api\/video\/[^\/?#]+\.m3u8(?:[?#]|$)/i.test(String(url || ''));
+    }
+
+    function loadQualityMap(url, success, error) {
+        var key = 'master|' + url;
+        var cached = cacheGet(key);
+
+        if (cached) {
+            success(cached);
+            return;
+        }
+
+        if (!qualityNetwork) {
+            qualityNetwork = createNetwork();
+            qualityNetwork.timeout(10000);
+        }
+
+        qualityNetwork.clear();
+
+        qualityNetwork.silent(url, function (text) {
+            var quality = qualityMapFromMaster(text, url);
+            if (quality) cacheSet(key, quality);
+            success(quality);
+        }, function () {
+            if (error) error();
+        }, false, {
+            dataType: 'text',
+            headers: {
+                'Accept': 'application/vnd.apple.mpegurl,*/*'
+            }
+        });
+    }
+
+    function preferredQuality(quality) {
+        var height = parseInt(Lampa.Storage.field('video_quality_default'), 10);
+        var key = height ? height + 'p' : '';
+        return key && quality[key] ? key : '';
+    }
+
+    function watchPlayer() {
+        if (!Lampa.Player || !Lampa.Player.listener) return;
+
+        Lampa.Player.listener.follow('start', function (data) {
+            var session = ++qualitySession;
+            var url = data && data.url;
+
+            if (!url || !isCutflixStream(url)) return;
+            if (!canUseProgramHls()) return;
+            if (!Lampa.PlayerPanel || !Lampa.PlayerPanel.quality) return;
+
+            loadQualityMap(url, function (quality) {
+                if (session !== qualitySession) return;
+                if (!quality) return;
+                if (Lampa.Player.opened && !Lampa.Player.opened()) return;
+
+                var preferred = preferredQuality(quality);
+                Lampa.PlayerPanel.quality(quality, preferred ? quality[preferred] : url);
+            });
+        });
+
+        Lampa.Player.listener.follow('destroy', function () {
+            qualitySession++;
+        });
     }
 
     function t(key) {
@@ -577,6 +731,7 @@
         Lampa.Component.add('cutflix_category', CatalogComponent);
         Lampa.Component.add('cutflix_item', ItemComponent);
 
+        watchPlayer();
         addMenu();
         addSettings();
     }
