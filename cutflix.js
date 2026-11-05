@@ -11,6 +11,7 @@
     var cache = {};
     var added = false;
     var qualityNetwork = null;
+    var forced_player = null;
 
     var ICON = '<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M4 5.5C4 4.67157 4.67157 4 5.5 4H18.5C19.3284 4 20 4.67157 20 5.5V18.5C20 19.3284 19.3284 20 18.5 20H5.5C4.67157 20 4 19.3284 4 18.5V5.5Z" stroke="currentColor" stroke-width="1.7"/><path d="M8 4V20M16 4V20M4 9H8M4 15H8M16 9H20M16 15H20" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>';
 
@@ -133,7 +134,6 @@
         var player = Lampa.Storage.field('player');
 
         if (platform.is('android') && player == 'android') return false;
-        if (platform.is('tizen') && player == 'tizen') return false;
         if (platform.is('orsay') && player == 'orsay') return false;
         if (platform.is('webos') && player == 'webos') return false;
         if (platform.is('apple_tv')) return false;
@@ -142,6 +142,31 @@
         if (platform.is('apple') && player != 'inner' && player != 'ios') return false;
 
         return true;
+    }
+
+    function needsInnerPlayer() {
+        return Lampa.Platform.is('tizen') && Lampa.Storage.field('player') == 'tizen';
+    }
+
+    function useInnerPlayer() {
+        if (forced_player !== null) return;
+
+        var player = Lampa.Storage.field('player');
+        if (player == 'inner') return;
+
+        forced_player = player;
+        Lampa.Storage.set('player', 'inner');
+
+        if (Lampa.Player && Lampa.Player.listener) Lampa.Player.listener.follow('destroy', restorePlayer);
+    }
+
+    function restorePlayer() {
+        if (forced_player === null) return;
+
+        Lampa.Storage.set('player', forced_player);
+        forced_player = null;
+
+        if (Lampa.Player && Lampa.Player.listener) Lampa.Player.listener.remove('destroy', restorePlayer);
     }
 
     function loadQualityMap(url, success, error) {
@@ -200,13 +225,20 @@
         entry.url = master;
 
         if (!canUseQualityUrls()) {
+            console.log('Cutflix', 'quality off', Lampa.Platform.get(), Lampa.Storage.field('player'));
             delete entry.hls_type;
             delete entry.quality;
+            delete entry.force_inner;
             done();
             return;
         }
 
         entry.hls_type = HLS_TYPE;
+
+        console.log('Cutflix', 'quality on', Lampa.Platform.get(), Lampa.Storage.field('player'), needsInnerPlayer() ? 'inner' : '');
+
+        if (needsInnerPlayer()) entry.force_inner = true;
+        else delete entry.force_inner;
 
         loadQualityMap(master, function (quality) {
             if (quality) {
@@ -604,7 +636,14 @@
                     if (destroyed) return;
 
                     current.playlist = list.length > 1 ? list : undefined;
-                    Lampa.Player.play(current);
+
+                    if (current.force_inner) useInnerPlayer();
+
+                    try {
+                        Lampa.Player.play(current);
+                    } catch (e) {
+                        restorePlayer();
+                    }
                 });
             });
         }
