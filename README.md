@@ -21,8 +21,20 @@
 3. Добавьте ссылку на плагин:
 
    ```text
-   https://raw.githubusercontent.com/danilvoe/lampa_plugin_sasflix/main/cutflix.js
+   https://cdn.jsdelivr.net/gh/danilvoe/lampa_plugin_cutflix@main/cutflix.js
    ```
+
+   Запасные адреса:
+
+   ```text
+   https://raw.githack.com/danilvoe/lampa_plugin_cutflix/main/cutflix.js
+   https://raw.githubusercontent.com/danilvoe/lampa_plugin_cutflix/main/cutflix.js
+   ```
+
+   Ссылка `raw.githubusercontent.com` может не работать в современных
+   браузерах и Lampa на Chromium: GitHub отдаёт файл как `text/plain`,
+   и браузер блокирует его загрузку как скрипта. В этом случае
+   используйте ссылку jsDelivr или raw.githack.
 
 4. Перезапустите Lampa.
 5. В главном меню появится пункт **Cutflix**.
