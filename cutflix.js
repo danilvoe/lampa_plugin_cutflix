@@ -12,6 +12,7 @@
     var added = false;
     var forced_player = null;
     var restore_timer = null;
+    var playback_network = null;
 
     var ICON = '<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M4 5.5C4 4.67157 4.67157 4 5.5 4H18.5C19.3284 4 20 4.67157 20 5.5V18.5C20 19.3284 19.3284 20 18.5 20H5.5C4.67157 20 4 19.3284 4 18.5V5.5Z" stroke="currentColor" stroke-width="1.7"/><path d="M8 4V20M16 4V20M4 9H8M4 15H8M16 9H20M16 15H20" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>';
 
@@ -35,6 +36,89 @@
 
     function streamUrl(videoId) {
         return apiUrl('video/' + videoId + '.m3u8');
+    }
+
+    function absoluteUrl(base, uri) {
+        try {
+            return new URL(uri, base).href;
+        } catch (e) {
+            if (/^(https?:)?\/\//i.test(uri) || uri.indexOf('data:') === 0) return uri;
+
+            var clean = String(base).split('?')[0].split('#')[0];
+
+            return clean.substring(0, clean.lastIndexOf('/') + 1) + uri;
+        }
+    }
+
+    function rewritePlaylist(text, playlistUrl) {
+        return String(text).replace(/\r/g, '').split('\n').map(function (line) {
+            if (!line.trim()) return '';
+
+            if (line.charAt(0) === '#') {
+                return line.replace(/URI="([^"]*)"/g, function (all, uri) {
+                    return 'URI="' + absoluteUrl(playlistUrl, uri) + '"';
+                });
+            }
+
+            return absoluteUrl(playlistUrl, line);
+        }).join('\n');
+    }
+
+    function makePlaylistBlob(text) {
+        try {
+            if (typeof URL === 'undefined' || typeof Blob === 'undefined' || !URL.createObjectURL) return '';
+
+            var blob = new Blob([text], {
+                type: 'application/vnd.apple.mpegurl'
+            });
+
+            return URL.createObjectURL(blob);
+        } catch (e) {
+            return '';
+        }
+    }
+
+    function playbackNetwork() {
+        if (!playback_network) {
+            playback_network = new Lampa.Reguest();
+            playback_network.timeout(20000);
+        }
+
+        return playback_network;
+    }
+
+    function loadMasterManifest(videoId, success, error) {
+        if (!videoId) {
+            error();
+            return;
+        }
+
+        var key = 'manifest:' + videoId;
+        var text = cacheGet(key);
+
+        if (typeof text === 'string') {
+            success(text);
+            return;
+        }
+
+        playbackNetwork().silent(streamUrl(videoId), function (data) {
+            if (typeof data !== 'string' || data.indexOf('#EXTM3U') === -1) {
+                error();
+                return;
+            }
+
+            cacheSet(key, data);
+
+            success(data);
+        }, function () {
+            error();
+        }, false, {
+            headers: {
+                'Accept': '*/*'
+            },
+            dataType: 'text',
+            timeout: 20000
+        });
     }
 
     function playEntry(url, title, timeline) {
@@ -100,13 +184,21 @@
     }
 
     function preparePlayback(entry, done) {
-        entry.url = entry.master_url || entry.url;
+        var original = entry.master_url || entry.url;
+
+        function finish(url) {
+            entry.url = url;
+
+            done(entry);
+        }
 
         if (!canUseProgramHls()) {
             console.log('Cutflix', 'quality off', Lampa.Platform.get(), Lampa.Storage.field('player'));
+
             delete entry.hls_type;
             delete entry.force_inner;
-            done(entry);
+
+            finish(original);
             return;
         }
 
@@ -123,7 +215,26 @@
             useInnerPlayer();
         } else delete entry.force_inner;
 
-        done(entry);
+        loadMasterManifest(entry.video_id, function (text) {
+            var rewritten = rewritePlaylist(text, streamUrl(entry.video_id));
+            var blob = makePlaylistBlob(rewritten);
+
+            if (blob) {
+                console.log('Cutflix', 'master playlist served as local blob');
+
+                entry.master_url = blob;
+
+                finish(blob);
+            } else {
+                console.log('Cutflix', 'master rewrite unavailable, using source url');
+
+                finish(original);
+            }
+        }, function () {
+            console.log('Cutflix', 'master prefetch failed, using source url');
+
+            finish(original);
+        });
     }
 
     function lazyEntry(videoId, title, timeline) {
