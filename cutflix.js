@@ -114,6 +114,9 @@
 
         console.log('Cutflix', 'quality on', Lampa.Platform.get(), Lampa.Storage.field('player'), needsInnerPlayer() ? 'inner' : '');
 
+        entry.hls_manifest_timeout = 25000;
+        entry.hls_retry_timeout = 45000;
+
         if (needsInnerPlayer()) {
             entry.force_inner = true;
 
