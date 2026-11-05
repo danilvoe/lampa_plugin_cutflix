@@ -10,7 +10,6 @@
     var HLS_TYPE = 'hlsjs';
     var cache = {};
     var added = false;
-    var qualityNetwork = null;
     var forced_player = null;
 
     var ICON = '<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M4 5.5C4 4.67157 4.67157 4 5.5 4H18.5C19.3284 4 20 4.67157 20 5.5V18.5C20 19.3284 19.3284 20 18.5 20H5.5C4.67157 20 4 19.3284 4 18.5V5.5Z" stroke="currentColor" stroke-width="1.7"/><path d="M8 4V20M16 4V20M4 9H8M4 15H8M16 9H20M16 15H20" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>';
@@ -45,85 +44,7 @@
         };
     }
 
-    function absoluteUrl(base, uri) {
-        try {
-            return new URL(uri, base).href;
-        } catch (e) {
-            if (/^https?:\/\//i.test(uri)) return uri;
-            var clean = String(base).split('?')[0].split('#')[0];
-            return clean.substring(0, clean.lastIndexOf('/') + 1) + uri;
-        }
-    }
-
-    function fixMediaLine(line, base) {
-        return line.replace(/URI="([^"]*)"/, function (all, uri) {
-            return 'URI="' + absoluteUrl(base, uri) + '"';
-        });
-    }
-
-    function encodeBase64(text) {
-        if (Lampa.Base64 && Lampa.Base64.encode) return Lampa.Base64.encode(text);
-        return btoa(unescape(encodeURIComponent(text)));
-    }
-
-    function qualityMapFromMaster(text, masterUrl) {
-        var lines = String(text || '').replace(/\r/g, '').split('\n');
-        var variants = [];
-        var medias = [];
-        var head = [];
-
-        for (var i = 0; i < lines.length; i++) {
-            var line = lines[i].trim();
-            if (!line) continue;
-
-            if (line.indexOf('#EXT-X-STREAM-INF:') === 0) {
-                var attrs = line.substring('#EXT-X-STREAM-INF:'.length).trim();
-                var uri = '';
-
-                for (var j = i + 1; j < lines.length; j++) {
-                    var next = lines[j].trim();
-                    if (!next) continue;
-                    if (next.charAt(0) !== '#') {
-                        uri = next;
-                        i = j;
-                    }
-                    break;
-                }
-
-                if (uri) variants.push({
-                    attrs: attrs,
-                    uri: absoluteUrl(masterUrl, uri)
-                });
-            } else if (line.indexOf('#EXT-X-MEDIA:') === 0) {
-                medias.push(fixMediaLine(line, masterUrl));
-            } else if (line === '#EXT-X-INDEPENDENT-SEGMENTS' || line.indexOf('#EXT-X-VERSION:') === 0) {
-                head.push(line);
-            }
-        }
-
-        var quality = {};
-
-        for (var v = 0; v < variants.length; v++) {
-            var resolution = /RESOLUTION=\d+x(\d+)/i.exec(variants[v].attrs);
-            var name = /NAME="([^"]+)"/i.exec(variants[v].attrs);
-            var height = resolution ? parseInt(resolution[1], 10) : 0;
-            var key = height ? height + 'p' : name ? name[1] + 'p' : '';
-
-            if (!key || quality[key]) continue;
-
-            var master = ['#EXTM3U']
-                .concat(head)
-                .concat(['#EXT-X-STREAM-INF:' + variants[v].attrs, variants[v].uri])
-                .concat(medias)
-                .join('\n') + '\n';
-
-            quality[key] = 'data:application/vnd.apple.mpegurl;base64,' + encodeBase64(master) + '#.m3u8';
-        }
-
-        return Object.keys(quality).length > 1 ? quality : null;
-    }
-
-    function canUseQualityUrls() {
+    function canUseProgramHls() {
         try {
             if (typeof Hls === 'undefined' || !Hls.isSupported || !Hls.isSupported()) return false;
         } catch (e) {
@@ -169,67 +90,14 @@
         if (Lampa.Player && Lampa.Player.listener) Lampa.Player.listener.remove('destroy', restorePlayer);
     }
 
-    function loadQualityMap(url, success, error) {
-        var key = 'master|' + url;
-        var cached = cacheGet(key);
+    function preparePlayback(entry, done) {
+        entry.url = entry.master_url || entry.url;
 
-        if (cached) {
-            success(cached);
-            return;
-        }
-
-        if (!qualityNetwork) {
-            qualityNetwork = createNetwork();
-            qualityNetwork.timeout(10000);
-        }
-
-        qualityNetwork.clear();
-
-        qualityNetwork.silent(url, function (text) {
-            var quality = qualityMapFromMaster(text, url);
-            if (quality) cacheSet(key, quality);
-            success(quality);
-        }, function () {
-            if (error) error();
-        }, false, {
-            dataType: 'text',
-            headers: {
-                'Accept': 'application/vnd.apple.mpegurl,*/*'
-            }
-        });
-    }
-
-    function qualityUrlFor(quality, masterUrl) {
-        var target = parseInt(Lampa.Storage.field('video_quality_default'), 10) || 1080;
-        var keys = Object.keys(quality);
-        var best = '';
-        var bestDiff = Infinity;
-
-        for (var i = 0; i < keys.length; i++) {
-            var height = parseInt(keys[i], 10);
-            if (!height) continue;
-
-            var diff = Math.abs(height - target);
-            if (!best || diff < bestDiff) {
-                best = keys[i];
-                bestDiff = diff;
-            }
-        }
-
-        return best ? quality[best] : masterUrl;
-    }
-
-    function prepareQuality(entry, done) {
-        var master = entry.master_url || entry.url;
-
-        entry.url = master;
-
-        if (!canUseQualityUrls()) {
+        if (!canUseProgramHls()) {
             console.log('Cutflix', 'quality off', Lampa.Platform.get(), Lampa.Storage.field('player'));
             delete entry.hls_type;
-            delete entry.quality;
             delete entry.force_inner;
-            done();
+            done(entry);
             return;
         }
 
@@ -240,16 +108,7 @@
         if (needsInnerPlayer()) entry.force_inner = true;
         else delete entry.force_inner;
 
-        loadQualityMap(master, function (quality) {
-            if (quality) {
-                entry.quality = quality;
-                entry.url = qualityUrlFor(quality, master);
-            } else delete entry.quality;
-            done();
-        }, function () {
-            delete entry.quality;
-            done();
-        });
+        done(entry);
     }
 
     function lazyEntry(videoId, title, timeline) {
@@ -259,7 +118,7 @@
         entry.video_id = videoId;
         entry.master_url = master;
         entry.url = function (done) {
-            prepareQuality(entry, done || function () {});
+            preparePlayback(entry, done || function () {});
         };
 
         return entry;
@@ -270,11 +129,6 @@
             done(entry);
         });
         else done(entry);
-    }
-
-    function prefetchQuality(masterUrl) {
-        if (!canUseQualityUrls()) return;
-        loadQualityMap(masterUrl, function () {}, function () {});
     }
 
     function t(key) {
@@ -710,8 +564,6 @@
 
                 data = row;
                 renderContent();
-
-                if (row.video && row.video.id) prefetchQuality(streamUrl(row.video.id));
 
                 var poster = imageUrl(posterUuid(row), 400, 600);
                 if (poster) Lampa.Background.change(poster);
