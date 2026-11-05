@@ -11,7 +11,6 @@
     var cache = {};
     var added = false;
     var qualityNetwork = null;
-    var qualitySession = 0;
 
     var ICON = '<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M4 5.5C4 4.67157 4.67157 4 5.5 4H18.5C19.3284 4 20 4.67157 20 5.5V18.5C20 19.3284 19.3284 20 18.5 20H5.5C4.67157 20 4 19.3284 4 18.5V5.5Z" stroke="currentColor" stroke-width="1.7"/><path d="M8 4V20M16 4V20M4 9H8M4 15H8M16 9H20M16 15H20" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>';
 
@@ -41,8 +40,7 @@
         return {
             url: url,
             title: title || '',
-            timeline: timeline,
-            hls_type: HLS_TYPE
+            timeline: timeline
         };
     }
 
@@ -124,16 +122,26 @@
         return Object.keys(quality).length > 1 ? quality : null;
     }
 
-    function canUseProgramHls() {
+    function canUseQualityUrls() {
         try {
-            return typeof Hls !== 'undefined' && Hls.isSupported && Hls.isSupported();
+            if (typeof Hls === 'undefined' || !Hls.isSupported || !Hls.isSupported()) return false;
         } catch (e) {
             return false;
         }
-    }
 
-    function isCutflixStream(url) {
-        return /\/api\/video\/[^\/?#]+\.m3u8(?:[?#]|$)/i.test(String(url || ''));
+        var platform = Lampa.Platform;
+        var player = Lampa.Storage.field('player');
+
+        if (platform.is('android') && player == 'android') return false;
+        if (platform.is('tizen') && player == 'tizen') return false;
+        if (platform.is('orsay') && player == 'orsay') return false;
+        if (platform.is('webos') && player == 'webos') return false;
+        if (platform.is('apple_tv')) return false;
+        if (platform.desktop() && player == 'other') return false;
+        if (platform.macOS() && player != 'inner') return false;
+        if (platform.is('apple') && player != 'inner' && player != 'ios') return false;
+
+        return true;
     }
 
     function loadQualityMap(url, success, error) {
@@ -166,36 +174,75 @@
         });
     }
 
-    function preferredQuality(quality) {
-        var height = parseInt(Lampa.Storage.field('video_quality_default'), 10);
-        var key = height ? height + 'p' : '';
-        return key && quality[key] ? key : '';
+    function qualityUrlFor(quality, masterUrl) {
+        var target = parseInt(Lampa.Storage.field('video_quality_default'), 10) || 1080;
+        var keys = Object.keys(quality);
+        var best = '';
+        var bestDiff = Infinity;
+
+        for (var i = 0; i < keys.length; i++) {
+            var height = parseInt(keys[i], 10);
+            if (!height) continue;
+
+            var diff = Math.abs(height - target);
+            if (!best || diff < bestDiff) {
+                best = keys[i];
+                bestDiff = diff;
+            }
+        }
+
+        return best ? quality[best] : masterUrl;
     }
 
-    function watchPlayer() {
-        if (!Lampa.Player || !Lampa.Player.listener) return;
+    function prepareQuality(entry, done) {
+        var master = entry.master_url || entry.url;
 
-        Lampa.Player.listener.follow('start', function (data) {
-            var session = ++qualitySession;
-            var url = data && data.url;
+        entry.url = master;
 
-            if (!url || !isCutflixStream(url)) return;
-            if (!canUseProgramHls()) return;
-            if (!Lampa.PlayerPanel || !Lampa.PlayerPanel.quality) return;
+        if (!canUseQualityUrls()) {
+            delete entry.hls_type;
+            delete entry.quality;
+            done();
+            return;
+        }
 
-            loadQualityMap(url, function (quality) {
-                if (session !== qualitySession) return;
-                if (!quality) return;
-                if (Lampa.Player.opened && !Lampa.Player.opened()) return;
+        entry.hls_type = HLS_TYPE;
 
-                var preferred = preferredQuality(quality);
-                Lampa.PlayerPanel.quality(quality, preferred ? quality[preferred] : url);
-            });
+        loadQualityMap(master, function (quality) {
+            if (quality) {
+                entry.quality = quality;
+                entry.url = qualityUrlFor(quality, master);
+            } else delete entry.quality;
+            done();
+        }, function () {
+            delete entry.quality;
+            done();
         });
+    }
 
-        Lampa.Player.listener.follow('destroy', function () {
-            qualitySession++;
+    function lazyEntry(videoId, title, timeline) {
+        var entry = playEntry(streamUrl(videoId), title, timeline);
+        var master = entry.url;
+
+        entry.video_id = videoId;
+        entry.master_url = master;
+        entry.url = function (done) {
+            prepareQuality(entry, done || function () {});
+        };
+
+        return entry;
+    }
+
+    function prepareEntry(entry, done) {
+        if (entry && typeof entry.url === 'function') entry.url(function () {
+            done(entry);
         });
+        else done(entry);
+    }
+
+    function prefetchQuality(masterUrl) {
+        if (!canUseQualityUrls()) return;
+        loadQualityMap(masterUrl, function () {}, function () {});
     }
 
     function t(key) {
@@ -515,7 +562,7 @@
                 });
 
                 callback(rows.map(function (row) {
-                    var entry = playEntry(streamUrl(row.video_id), row.title, timelineFor(row.alias));
+                    var entry = lazyEntry(row.video_id, row.title, timelineFor(row.alias));
                     entry.thumbnail = imageUrl(posterUuid(row), 200, 300);
                     return entry;
                 }));
@@ -538,26 +585,27 @@
             }, t('cutflix_loading'));
 
             buildPlaylist(function (playlist) {
-                Lampa.Loading.stop();
-                playing = false;
+                var list = playlist || [];
+                var current = null;
 
-                if (destroyed) return;
+                list.forEach(function (entry) {
+                    if (entry.video_id === data.video.id) current = entry;
+                });
 
-                var url = streamUrl(data.video.id);
-                var current = playEntry(url, data.title, timelineFor(data.alias));
-
-                if (playlist && playlist.length > 1) {
-                    var found = false;
-                    playlist.forEach(function (entry) {
-                        if (entry.url === url) found = true;
-                    });
-                    if (!found) playlist.push(current);
+                if (!current) {
+                    current = lazyEntry(data.video.id, data.title, timelineFor(data.alias));
+                    list.push(current);
                 }
 
-                var playData = playEntry(url, data.title, current.timeline);
-                playData.playlist = playlist && playlist.length > 1 ? playlist : undefined;
+                prepareEntry(current, function () {
+                    Lampa.Loading.stop();
+                    playing = false;
 
-                Lampa.Player.play(playData);
+                    if (destroyed) return;
+
+                    current.playlist = list.length > 1 ? list : undefined;
+                    Lampa.Player.play(current);
+                });
             });
         }
 
@@ -623,6 +671,8 @@
 
                 data = row;
                 renderContent();
+
+                if (row.video && row.video.id) prefetchQuality(streamUrl(row.video.id));
 
                 var poster = imageUrl(posterUuid(row), 400, 600);
                 if (poster) Lampa.Background.change(poster);
@@ -731,7 +781,6 @@
         Lampa.Component.add('cutflix_category', CatalogComponent);
         Lampa.Component.add('cutflix_item', ItemComponent);
 
-        watchPlayer();
         addMenu();
         addSettings();
     }
