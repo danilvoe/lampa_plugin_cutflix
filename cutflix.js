@@ -11,6 +11,7 @@
     var cache = {};
     var added = false;
     var forced_player = null;
+    var restore_timer = null;
 
     var ICON = '<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M4 5.5C4 4.67157 4.67157 4 5.5 4H18.5C19.3284 4 20 4.67157 20 5.5V18.5C20 19.3284 19.3284 20 18.5 20H5.5C4.67157 20 4 19.3284 4 18.5V5.5Z" stroke="currentColor" stroke-width="1.7"/><path d="M8 4V20M16 4V20M4 9H8M4 15H8M16 9H20M16 15H20" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>';
 
@@ -78,16 +79,24 @@
         forced_player = player;
         Lampa.Storage.set('player', 'inner');
 
-        if (Lampa.Player && Lampa.Player.listener) Lampa.Player.listener.follow('destroy', restorePlayer);
+        if (Lampa.Player && Lampa.Player.listener)
+            Lampa.Player.listener.follow('destroy', syncRestorePlayer);
+    }
+
+    function syncRestorePlayer() {
+        if (forced_player === null || restore_timer) return;
+
+        restore_timer = setTimeout(restorePlayer, 1);
     }
 
     function restorePlayer() {
+        clearTimeout(restore_timer);
+        restore_timer = null;
+
         if (forced_player === null) return;
 
         Lampa.Storage.set('player', forced_player);
         forced_player = null;
-
-        if (Lampa.Player && Lampa.Player.listener) Lampa.Player.listener.remove('destroy', restorePlayer);
     }
 
     function preparePlayback(entry, done) {
@@ -105,8 +114,11 @@
 
         console.log('Cutflix', 'quality on', Lampa.Platform.get(), Lampa.Storage.field('player'), needsInnerPlayer() ? 'inner' : '');
 
-        if (needsInnerPlayer()) entry.force_inner = true;
-        else delete entry.force_inner;
+        if (needsInnerPlayer()) {
+            entry.force_inner = true;
+
+            useInnerPlayer();
+        } else delete entry.force_inner;
 
         done(entry);
     }
@@ -400,8 +412,12 @@
             };
         };
 
-        component.onDestroy = function () {
+        var base_destroy = component.destroy;
+
+        component.destroy = function () {
             network.clear();
+
+            if (base_destroy) base_destroy.call(component);
         };
 
         return component;
@@ -490,8 +506,6 @@
                     if (destroyed) return;
 
                     current.playlist = list.length > 1 ? list : undefined;
-
-                    if (current.force_inner) useInnerPlayer();
 
                     try {
                         Lampa.Player.play(current);
@@ -607,6 +621,9 @@
 
         this.destroy = function () {
             destroyed = true;
+
+            restorePlayer();
+
             network.clear();
             html.remove();
         };
@@ -619,20 +636,27 @@
     }
 
     function addMenu() {
-        if ($('.menu .menu__list [data-action="cutflix"]').length) return;
-
-        var item = $('<li class="menu__item selector" data-action="cutflix"><div class="menu__ico"></div><div class="menu__text"></div></li>');
-
-        item.find('.menu__ico').html(ICON);
-        item.find('.menu__text').text(t('cutflix_title'));
-        item.on('hover:enter click', function () {
+        var action = function () {
             Lampa.Activity.push({
                 url: '',
                 title: t('cutflix_title'),
                 component: 'cutflix_catalog',
                 page: 1
             });
-        });
+        };
+
+        if (Lampa.Menu && Lampa.Menu.addButton) {
+            Lampa.Menu.addButton(ICON, t('cutflix_title'), action);
+            return;
+        }
+
+        if ($('.menu .menu__list [data-action="cutflix"]').length) return;
+
+        var item = $('<li class="menu__item selector" data-action="cutflix"><div class="menu__ico"></div><div class="menu__text"></div></li>');
+
+        item.find('.menu__ico').html(ICON);
+        item.find('.menu__text').text(t('cutflix_title'));
+        item.on('hover:enter click', action);
 
         $('.menu .menu__list').eq(0).append(item);
     }
