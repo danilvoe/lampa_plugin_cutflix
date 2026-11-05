@@ -7,6 +7,7 @@
     var DEFAULT_URL = 'https://www.cutflix.ru';
     var PAGE_SIZE = 24;
     var CACHE_TTL = 1000 * 60 * 5;
+    var HLS_TYPE = 'hlsjs';
     var cache = {};
     var added = false;
 
@@ -32,6 +33,15 @@
 
     function streamUrl(videoId) {
         return apiUrl('video/' + videoId + '.m3u8');
+    }
+
+    function playEntry(url, title, timeline) {
+        return {
+            url: url,
+            title: title || '',
+            timeline: timeline,
+            hls_type: HLS_TYPE
+        };
     }
 
     function t(key) {
@@ -351,13 +361,9 @@
                 });
 
                 callback(rows.map(function (row) {
-                    var poster = imageUrl(posterUuid(row), 200, 300);
-                    return {
-                        title: row.title || '',
-                        url: streamUrl(row.video_id),
-                        thumbnail: poster,
-                        timeline: timelineFor(row.alias)
-                    };
+                    var entry = playEntry(streamUrl(row.video_id), row.title, timelineFor(row.alias));
+                    entry.thumbnail = imageUrl(posterUuid(row), 200, 300);
+                    return entry;
                 }));
             }, function () {
                 callback(null);
@@ -384,11 +390,7 @@
                 if (destroyed) return;
 
                 var url = streamUrl(data.video.id);
-                var current = {
-                    url: url,
-                    title: data.title || '',
-                    timeline: timelineFor(data.alias)
-                };
+                var current = playEntry(url, data.title, timelineFor(data.alias));
 
                 if (playlist && playlist.length > 1) {
                     var found = false;
@@ -398,12 +400,10 @@
                     if (!found) playlist.push(current);
                 }
 
-                Lampa.Player.play({
-                    url: url,
-                    title: data.title || '',
-                    timeline: current.timeline,
-                    playlist: playlist && playlist.length > 1 ? playlist : undefined
-                });
+                var playData = playEntry(url, data.title, current.timeline);
+                playData.playlist = playlist && playlist.length > 1 ? playlist : undefined;
+
+                Lampa.Player.play(playData);
             });
         }
 
