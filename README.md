@@ -21,15 +21,18 @@
 3. Добавьте ссылку на плагин:
 
    ```text
-   https://cdn.jsdelivr.net/gh/danilvoe/lampa_plugin_cutflix@main/cutflix.js
+   https://cdn.jsdelivr.net/gh/danilvoe/lampa_plugin_cutflix@c3a0846/cutflix.js
    ```
 
-   Запасные адреса:
+   Адрес с `@main` может отдавать старую версию из кэша CDN до 12 часов.
+   Если нужна свежая версия сразу, используйте:
 
    ```text
-   https://raw.githack.com/danilvoe/lampa_plugin_cutflix/main/cutflix.js
-   https://raw.githubusercontent.com/danilvoe/lampa_plugin_cutflix/main/cutflix.js
+   https://testingcf.jsdelivr.net/gh/danilvoe/lampa_plugin_cutflix@main/cutflix.js
    ```
+
+   При обновлении плагина замените хэш `c3a0846` в адресе на хэш нового
+   коммита.
 
    Ссылка `raw.githubusercontent.com` может не работать в современных
    браузерах и Lampa на Chromium: GitHub отдаёт файл как `text/plain`,
