@@ -13,6 +13,7 @@
     var forced_player = null;
     var restore_timer = null;
     var playback_network = null;
+    var playlist_patch_installed = false;
 
     var ICON = '<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M4 5.5C4 4.67157 4.67157 4 5.5 4H18.5C19.3284 4 20 4.67157 20 5.5V18.5C20 19.3284 19.3284 20 18.5 20H5.5C4.67157 20 4 19.3284 4 18.5V5.5Z" stroke="currentColor" stroke-width="1.7"/><path d="M8 4V20M16 4V20M4 9H8M4 15H8M16 9H20M16 15H20" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>';
 
@@ -38,6 +39,11 @@
         return apiUrl('video/' + videoId + '.m3u8');
     }
 
+    function fileUrl(fileUuid) {
+        if (!fileUuid) return '';
+        return apiUrl('file/' + fileUuid);
+    }
+
     function absoluteUrl(base, uri) {
         try {
             return new URL(uri, base).href;
@@ -48,6 +54,127 @@
 
             return clean.substring(0, clean.lastIndexOf('/') + 1) + uri;
         }
+    }
+
+    function isCutflixPlaylist(url) {
+        var host = '';
+
+        try {
+            host = new URL(url).host.toLowerCase();
+        } catch (e) {
+            return /cutflix\.ru/i.test(url);
+        }
+
+        var base = '';
+
+        try {
+            base = new URL(baseUrl()).host.toLowerCase();
+        } catch (e) {}
+
+        return host === base || /(^|\.)cutflix\.ru$/i.test(host);
+    }
+
+    function rewriteInitSegments(text, playlistUrl) {
+        text = String(text);
+
+        if (!isCutflixPlaylist(playlistUrl)) return text;
+        if (text.indexOf('#EXT-X-MAP') === -1) return text;
+        if (/#EXT-X-STREAM-INF:/.test(text)) return text;
+
+        var lines = text.replace(/\r/g, '').split('\n');
+        var pending = -1;
+        var changed = false;
+
+        for (var i = 0; i < lines.length; i++) {
+            var line = lines[i].trim();
+
+            if (!line) continue;
+
+            if (line.indexOf('#EXT-X-MAP:') === 0) {
+                if (line.indexOf('URI="') !== -1 && line.indexOf('BYTERANGE="') !== -1) pending = i;
+
+                continue;
+            }
+
+            if (line.charAt(0) === '#') continue;
+
+            if (pending === -1) continue;
+
+            var media = absoluteUrl(playlistUrl, line);
+
+            if (!/\.m3u8(?:[?#]|$)/i.test(media)) {
+                lines[pending] = lines[pending].replace(/URI="[^"]*"/, 'URI="' + media + '"');
+                changed = true;
+            }
+
+            pending = -1;
+        }
+
+        return changed ? lines.join('\n') : text;
+    }
+
+    function installPlaylistPatch() {
+        if (playlist_patch_installed) return;
+        if (typeof Hls === 'undefined' || !Hls.DefaultConfig) return;
+
+        var Default = Hls.DefaultConfig;
+        var Original = Default.pLoader || Default.loader;
+
+        if (!Original) return;
+
+        function CutflixPlaylistLoader(config) {
+            this.loader = new Original(config);
+            this.stats = this.loader.stats;
+            this.context = null;
+        }
+
+        CutflixPlaylistLoader.prototype.load = function (context, config, callbacks) {
+            this.context = context;
+
+            this.loader.load(context, config, {
+                onSuccess: function (response, stats, ctx, network) {
+                    try {
+                        if (response && typeof response.data === 'string' && response.data.indexOf('#EXT-X-MAP') !== -1) {
+                            var url = (ctx && ctx.url) || (context && context.url) || '';
+                            var rewritten = rewriteInitSegments(response.data, url);
+
+                            if (rewritten !== response.data) {
+                                response.data = rewritten;
+
+                                console.log('Cutflix', 'init segment redirected to media host');
+                            }
+                        }
+                    } catch (e) {}
+
+                    if (callbacks.onSuccess) callbacks.onSuccess(response, stats, ctx, network);
+                },
+                onError: function (response, stats, ctx, network) {
+                    if (callbacks.onError) callbacks.onError(response, stats, ctx, network);
+                },
+                onTimeout: function (stats, ctx, network) {
+                    if (callbacks.onTimeout) callbacks.onTimeout(stats, ctx, network);
+                },
+                onAbort: function (stats, ctx, network) {
+                    if (callbacks.onAbort) callbacks.onAbort(stats, ctx, network);
+                },
+                onProgress: function (stats, ctx, data, network) {
+                    if (callbacks.onProgress) callbacks.onProgress(stats, ctx, data, network);
+                }
+            });
+        };
+
+        CutflixPlaylistLoader.prototype.abort = function () {
+            if (this.loader) this.loader.abort();
+        };
+
+        CutflixPlaylistLoader.prototype.destroy = function () {
+            if (this.loader) this.loader.destroy();
+        };
+
+        Default.pLoader = CutflixPlaylistLoader;
+        playlist_patch_installed = true;
+
+        console.log('Cutflix', 'hls playlist patch installed');
     }
 
     function playbackNetwork() {
@@ -175,12 +302,16 @@
         };
     }
 
-    function canUseProgramHls() {
+    function hlsSupported() {
         try {
-            if (typeof Hls === 'undefined' || !Hls.isSupported || !Hls.isSupported()) return false;
+            return typeof Hls !== 'undefined' && Hls.isSupported && Hls.isSupported();
         } catch (e) {
             return false;
         }
+    }
+
+    function canUseProgramHls() {
+        if (!hlsSupported()) return false;
 
         var platform = Lampa.Platform;
         var player = Lampa.Storage.field('player');
@@ -200,17 +331,31 @@
         return Lampa.Platform.is('tizen') && Lampa.Storage.field('player') == 'tizen';
     }
 
+    function setPlayer(player) {
+        var current = Lampa.Storage.field('player');
+
+        if (current == player) return;
+
+        if (forced_player === null) {
+            forced_player = current;
+
+            if (Lampa.Player && Lampa.Player.listener)
+                Lampa.Player.listener.follow('destroy', syncRestorePlayer);
+        }
+
+        Lampa.Storage.set('player', player);
+    }
+
     function useInnerPlayer() {
-        if (forced_player !== null) return;
+        if (Lampa.Storage.field('player') == 'inner') return;
 
-        var player = Lampa.Storage.field('player');
-        if (player == 'inner') return;
+        setPlayer('inner');
+    }
 
-        forced_player = player;
-        Lampa.Storage.set('player', 'inner');
+    function useNativePlayer() {
+        if (Lampa.Storage.field('player') == 'tizen') return;
 
-        if (Lampa.Player && Lampa.Player.listener)
-            Lampa.Player.listener.follow('destroy', syncRestorePlayer);
+        setPlayer('tizen');
     }
 
     function syncRestorePlayer() {
@@ -231,6 +376,7 @@
 
     function preparePlayback(entry, done) {
         var original = entry.master_url || entry.url;
+        var native_file = Lampa.Platform.is('tizen') ? fileUrl(entry.file_uuid) : '';
 
         function finish(url) {
             entry.url = url;
@@ -238,15 +384,28 @@
             done(entry);
         }
 
+        if (native_file && !hlsSupported()) {
+            console.log('Cutflix', 'native file fallback', Lampa.Platform.get());
+
+            delete entry.hls_type;
+            delete entry.error;
+
+            useNativePlayer();
+            finish(native_file);
+            return;
+        }
+
         if (!canUseProgramHls()) {
             console.log('Cutflix', 'quality off', Lampa.Platform.get(), Lampa.Storage.field('player'));
 
             delete entry.hls_type;
-            delete entry.force_inner;
+            delete entry.error;
 
             finish(original);
             return;
         }
+
+        installPlaylistPatch();
 
         entry.hls_type = HLS_TYPE;
 
@@ -255,11 +414,16 @@
         entry.hls_manifest_timeout = 25000;
         entry.hls_retry_timeout = 45000;
 
-        if (needsInnerPlayer()) {
-            entry.force_inner = true;
+        if (needsInnerPlayer()) useInnerPlayer();
 
-            useInnerPlayer();
-        } else delete entry.force_inner;
+        if (native_file) {
+            entry.error = function (data, reserve) {
+                console.log('Cutflix', 'hls failed, switching to native file');
+
+                useNativePlayer();
+                reserve(native_file);
+            };
+        } else delete entry.error;
 
         loadMasterManifest(entry.video_id, function (text) {
             preheatPlaylist(entry.video_id, text);
@@ -274,11 +438,12 @@
         });
     }
 
-    function lazyEntry(videoId, title, timeline) {
+    function lazyEntry(videoId, title, timeline, fileUuid) {
         var entry = playEntry(streamUrl(videoId), title, timeline);
         var master = entry.url;
 
         entry.video_id = videoId;
+        entry.file_uuid = fileUuid || '';
         entry.master_url = master;
         entry.url = function (done) {
             preparePlayback(entry, done || function () {});
@@ -325,6 +490,7 @@
             type: isCategory(item) ? 'category' : 'publication',
             category_id: item.category_id,
             video_id: item.video_id,
+            file_uuid: item.video && item.video.file ? item.video.file.uuid : '',
             views_count: item.views_count,
             publications_count: item.publications_count || 0,
             description: item.description || ''
@@ -615,7 +781,7 @@
                 });
 
                 callback(rows.map(function (row) {
-                    var entry = lazyEntry(row.video_id, row.title, timelineFor(row.alias));
+                    var entry = lazyEntry(row.video_id, row.title, timelineFor(row.alias), row.video && row.video.file ? row.video.file.uuid : '');
                     entry.thumbnail = imageUrl(posterUuid(row), 200, 300);
                     return entry;
                 }));
@@ -646,7 +812,7 @@
                 });
 
                 if (!current) {
-                    current = lazyEntry(data.video.id, data.title, timelineFor(data.alias));
+                    current = lazyEntry(data.video.id, data.title, timelineFor(data.alias), data.video.file ? data.video.file.uuid : '');
                     list.push(current);
                 }
 
