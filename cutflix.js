@@ -673,19 +673,20 @@
         var css = [
             '.cutflix-item{position:relative;min-height:100%;box-sizing:border-box;padding:4em 5em;overflow:hidden}',
             '.cutflix-item__bg{position:absolute;left:-4em;top:-4em;right:-4em;bottom:-4em;background-size:cover;background-position:center;opacity:.16;filter:blur(28px);transform:scale(1.08);pointer-events:none}',
-            '.cutflix-item__inner{position:relative;display:flex;align-items:flex-start;gap:3em;max-width:110em;margin:0 auto}',
-            '.cutflix-item__poster{flex:0 0 22em;width:22em;aspect-ratio:2/3;border-radius:.5em;overflow:hidden;background:rgba(255,255,255,.06)}',
+            '.cutflix-item__inner{position:relative;display:flex;align-items:flex-start;max-width:110em;margin:0 auto}',
+            '.cutflix-item__poster{position:relative;flex:0 0 auto;width:22em;max-width:36vh;aspect-ratio:2/3;border-radius:.5em;overflow:hidden;background:rgba(255,255,255,.06);margin-right:4em}',
             '.cutflix-item__poster img{display:block;width:100%;height:100%;object-fit:cover}',
             '.cutflix-item__body{flex:1;min-width:0;padding-top:.5em}',
             '.cutflix-item__title{font-size:2.4em;font-weight:600;line-height:1.2;margin-bottom:.5em}',
             '.cutflix-item__meta{font-size:1.2em;opacity:.6;margin-bottom:1.6em}',
             '.cutflix-item__descr{font-size:1.3em;line-height:1.55;opacity:.9;white-space:pre-line;max-width:60em;margin-bottom:2em}',
+            '.cutflix-item__actions{margin-bottom:1.8em}',
             '.cutflix-item__play{display:inline-flex;align-items:center;gap:.6em;font-size:1.3em;padding:.8em 2em}',
             '.cutflix-item__play svg{width:1.4em;height:1.4em}',
             '.cutflix-item__error{position:relative;max-width:50em;margin:4em auto;text-align:center}',
             '.cutflix-item__error-text{font-size:1.6em;margin-bottom:1.5em;opacity:.8}',
             '.cutflix-item__retry{display:inline-flex;align-items:center;justify-content:center;font-size:1.3em;padding:.8em 2em}',
-            '@media (max-width:800px){.cutflix-item{padding:2em}.cutflix-item__inner{flex-direction:column;gap:2em}.cutflix-item__poster{flex:0 0 14em;width:14em}.cutflix-item__title{font-size:2em}}'
+            '@media (max-width:800px){.cutflix-item{padding:2em}.cutflix-item__inner{flex-direction:column}.cutflix-item__poster{width:14em;max-width:100%;margin-right:0;margin-bottom:2em}.cutflix-item__title{font-size:2em}}'
         ].join('');
 
         $('<style id="cutflix-style"></style>').text(css).appendTo('head');
@@ -875,7 +876,7 @@
             content.empty();
             playButton = null;
 
-            var poster = imageUrl(posterUuid(data), 400, 600);
+            var poster = imageUrl(posterUuid(data), 800, 1200);
             var meta = [];
 
             if (yearOf(data)) meta.push(yearOf(data));
@@ -894,10 +895,10 @@
 
             playButton = button;
 
+            body.append($('<div class="cutflix-item__actions"></div>').append(button));
             body.append($('<div class="cutflix-item__title"></div>').text(data.title || ''));
             body.append($('<div class="cutflix-item__meta"></div>').text(meta.join(' · ')));
             body.append($('<div class="cutflix-item__descr"></div>').text(data.description || ''));
-            body.append($('<div class="cutflix-item__actions"></div>').append(button));
 
             content.append(posterBox, body);
             if (poster) bg.css('background-image', 'url("' + poster + '")');
