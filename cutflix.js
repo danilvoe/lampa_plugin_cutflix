@@ -187,14 +187,18 @@
         var Default = Hls.DefaultConfig;
 
         buffer_limits_saved = {
+            maxBufferLength: Default.maxBufferLength,
             maxMaxBufferLength: Default.maxMaxBufferLength,
             maxBufferSize: Default.maxBufferSize,
-            backBufferLength: Default.backBufferLength
+            backBufferLength: Default.backBufferLength,
+            enableWorker: Default.enableWorker
         };
 
-        Default.maxMaxBufferLength = 60;
-        Default.maxBufferSize = 20000000;
-        Default.backBufferLength = 30;
+        Default.maxBufferLength = 20;
+        Default.maxMaxBufferLength = 30;
+        Default.maxBufferSize = 10000000;
+        Default.backBufferLength = 10;
+        Default.enableWorker = false;
 
         if (!buffer_limit_listener && Lampa.Player && Lampa.Player.listener) {
             Lampa.Player.listener.follow('destroy', restoreTvBufferLimits);
@@ -210,9 +214,11 @@
         if (typeof Hls !== 'undefined' && Hls.DefaultConfig) {
             var Default = Hls.DefaultConfig;
 
+            Default.maxBufferLength = buffer_limits_saved.maxBufferLength;
             Default.maxMaxBufferLength = buffer_limits_saved.maxMaxBufferLength;
             Default.maxBufferSize = buffer_limits_saved.maxBufferSize;
             Default.backBufferLength = buffer_limits_saved.backBufferLength;
+            Default.enableWorker = buffer_limits_saved.enableWorker;
         }
 
         buffer_limits_saved = null;
