@@ -676,7 +676,10 @@
         if (document.getElementById('cutflix-style')) return;
 
         var css = [
-            '.cutflix-item{position:relative;min-height:100%;box-sizing:border-box;padding:4em 5em;overflow:hidden}',
+            '.cutflix-item{position:relative;box-sizing:border-box;overflow:hidden}',
+            '.cutflix-item__scroll{position:relative;height:100%;box-sizing:border-box;padding:4em 5em;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch}',
+            '.cutflix-item__scroll::-webkit-scrollbar{width:.4em}',
+            '.cutflix-item__scroll::-webkit-scrollbar-thumb{background:rgba(255,255,255,.2);border-radius:1em}',
             '.cutflix-item__bg{position:absolute;left:-4em;top:-4em;right:-4em;bottom:-4em;background-size:cover;background-position:center;opacity:.16;filter:blur(28px);transform:scale(1.08);pointer-events:none}',
             '.cutflix-item__inner{position:relative;display:flex;align-items:flex-start;max-width:110em;margin:0 auto}',
             '.cutflix-item__poster{position:relative;flex:0 0 auto;width:22em;max-width:36vh;border-radius:.5em;overflow:hidden;background:rgba(255,255,255,.06);margin-right:4em}',
@@ -692,7 +695,7 @@
             '.cutflix-item__error-text{font-size:1.6em;margin-bottom:1.5em;opacity:.8}',
             '.cutflix-item__retry{display:inline-flex;align-items:center;justify-content:center;font-size:1.3em;padding:.8em 2em}',
             '.cutflix-catalog .card__title{margin-bottom:1em}',
-            '@media (max-width:800px){.cutflix-item{padding:2em}.cutflix-item__inner{flex-direction:column}.cutflix-item__poster{width:14em;max-width:100%;margin-right:0;margin-bottom:2em}.cutflix-item__title{font-size:2em}}'
+            '@media (max-width:800px){.cutflix-item__scroll{padding:2em}.cutflix-item__inner{flex-direction:column}.cutflix-item__poster{width:14em;max-width:100%;margin-right:0;margin-bottom:2em}.cutflix-item__title{font-size:2em}}'
         ].join('');
 
         $('<style id="cutflix-style"></style>').text(css).appendTo('head');
@@ -788,9 +791,10 @@
 
     function ItemComponent(object) {
         var network = createNetwork();
-        var html = $('<div class="cutflix-item"></div>');
+        var html = $('<div class="cutflix-item layer--wheight"></div>');
         var bg = $('<div class="cutflix-item__bg"></div>').appendTo(html);
-        var content = $('<div class="cutflix-item__inner"></div>').appendTo(html);
+        var scroller = $('<div class="cutflix-item__scroll"></div>').appendTo(html);
+        var content = $('<div class="cutflix-item__inner"></div>').appendTo(scroller);
         var data = null;
         var playButton = null;
         var started = false;
@@ -805,6 +809,20 @@
             Lampa.Controller.collectionSet(html);
             if (playButton && playButton.length) Lampa.Controller.collectionFocus(playButton[0], html);
             else Lampa.Controller.collectionFocus(false, html);
+        }
+
+        function scrollPage(direction) {
+            var el = scroller[0];
+            if (!el || el.scrollHeight <= el.clientHeight) return false;
+
+            var step = Math.max(100, Math.round(el.clientHeight * 0.85));
+            var max = el.scrollHeight - el.clientHeight;
+            var target = Math.min(max, Math.max(0, el.scrollTop + step * direction));
+
+            if (target === el.scrollTop) return false;
+
+            el.scrollTop = target;
+            return true;
         }
 
         function buildPlaylist(callback) {
@@ -882,6 +900,7 @@
         function renderContent() {
             content.empty();
             playButton = null;
+            scroller[0].scrollTop = 0;
 
             var poster = imageUrl(posterUuid(data), 800, 1200);
             var meta = [];
@@ -914,6 +933,7 @@
         function renderError(self) {
             content.empty();
             playButton = null;
+            scroller[0].scrollTop = 0;
 
             var box = $('<div class="cutflix-item__error"></div>');
             var retry = $('<div class="simple-button selector cutflix-item__retry"></div>');
@@ -970,7 +990,10 @@
                     Lampa.Controller.toggle('menu');
                 },
                 up: function () {
-                    Lampa.Controller.toggle('head');
+                    if (!scrollPage(-1)) Lampa.Controller.toggle('head');
+                },
+                down: function () {
+                    scrollPage(1);
                 },
                 back: back
             });
