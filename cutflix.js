@@ -16,7 +16,6 @@
     var playlist_patch_installed = false;
     var buffer_limits_saved = null;
     var buffer_limit_listener = false;
-    var buffer_fallback_bound = false;
 
     var ICON = '<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M4 5.5C4 4.67157 4.67157 4 5.5 4H18.5C19.3284 4 20 4.67157 20 5.5V18.5C20 19.3284 19.3284 20 18.5 20H5.5C4.67157 20 4 19.3284 4 18.5V5.5Z" stroke="currentColor" stroke-width="1.7"/><path d="M8 4V20M16 4V20M4 9H8M4 15H8M16 9H20M16 15H20" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>';
 
@@ -188,16 +187,10 @@
         var Default = Hls.DefaultConfig;
 
         buffer_limits_saved = {
-            maxBufferLength: Default.maxBufferLength,
-            maxMaxBufferLength: Default.maxMaxBufferLength,
-            maxBufferSize: Default.maxBufferSize,
-            backBufferLength: Default.backBufferLength
+            maxMaxBufferLength: Default.maxMaxBufferLength
         };
 
-        Default.maxBufferLength = 15;
-        Default.maxMaxBufferLength = 30;
-        Default.maxBufferSize = 15000000;
-        Default.backBufferLength = 15;
+        Default.maxMaxBufferLength = 60;
 
         if (!buffer_limit_listener && Lampa.Player && Lampa.Player.listener) {
             Lampa.Player.listener.follow('destroy', restoreTvBufferLimits);
@@ -211,80 +204,12 @@
         if (!buffer_limits_saved) return;
 
         if (typeof Hls !== 'undefined' && Hls.DefaultConfig) {
-            var Default = Hls.DefaultConfig;
-
-            Default.maxBufferLength = buffer_limits_saved.maxBufferLength;
-            Default.maxMaxBufferLength = buffer_limits_saved.maxMaxBufferLength;
-            Default.maxBufferSize = buffer_limits_saved.maxBufferSize;
-            Default.backBufferLength = buffer_limits_saved.backBufferLength;
+            Hls.DefaultConfig.maxMaxBufferLength = buffer_limits_saved.maxMaxBufferLength;
         }
 
         buffer_limits_saved = null;
 
         console.log('Cutflix', 'tv buffer limits restored');
-    }
-
-    function bindBufferErrorFallback() {
-        if (buffer_fallback_bound) return;
-        if (!Lampa.PlayerVideo || !Lampa.PlayerVideo.listener) return;
-
-        buffer_fallback_bound = true;
-
-        Lampa.PlayerVideo.listener.follow('error', function (e) {
-            if (!e || !/bufferFullError/i.test(String(e.error || ''))) return;
-            if (!Lampa.Platform.is('tizen')) return;
-
-            var data = null;
-
-            try {
-                data = Lampa.Player.playdata();
-            } catch (err) {}
-
-            if (!data || !data.file_uuid || data.__cutflix_native) return;
-
-            data.__cutflix_native = true;
-
-            var time = 0;
-
-            try {
-                time = Lampa.PlayerVideo.video().currentTime || 0;
-            } catch (err) {}
-
-            var file = fileUrl(data.file_uuid);
-
-            if (!file) return;
-
-            console.log('Cutflix', 'buffer full, switching to native file');
-
-            useNativePlayer();
-
-            try {
-                Lampa.PlayerVideo.destroy(true);
-                Lampa.PlayerVideo.url(file, true);
-            } catch (err) {
-                return;
-            }
-
-            if (time > 1) {
-                var seeked = false;
-                var seek = function () {
-                    if (seeked) return;
-
-                    seeked = true;
-
-                    try {
-                        Lampa.PlayerVideo.video().currentTime = time;
-                    } catch (err) {}
-
-                    try {
-                        Lampa.PlayerVideo.listener.remove('canplay', seek);
-                    } catch (err) {}
-                };
-
-                Lampa.PlayerVideo.listener.follow('canplay', seek);
-                setTimeout(seek, 5000);
-            }
-        });
     }
 
     function playbackNetwork() {
@@ -519,7 +444,6 @@
 
         installPlaylistPatch();
         applyTvBufferLimits();
-        bindBufferErrorFallback();
 
         entry.hls_type = HLS_TYPE;
 
@@ -1129,7 +1053,6 @@
 
         addMenu();
         addSettings();
-        bindBufferErrorFallback();
     }
 
     if (window.appready) add();
