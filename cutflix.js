@@ -187,10 +187,14 @@
         var Default = Hls.DefaultConfig;
 
         buffer_limits_saved = {
-            maxMaxBufferLength: Default.maxMaxBufferLength
+            maxMaxBufferLength: Default.maxMaxBufferLength,
+            maxBufferSize: Default.maxBufferSize,
+            backBufferLength: Default.backBufferLength
         };
 
         Default.maxMaxBufferLength = 60;
+        Default.maxBufferSize = 20000000;
+        Default.backBufferLength = 30;
 
         if (!buffer_limit_listener && Lampa.Player && Lampa.Player.listener) {
             Lampa.Player.listener.follow('destroy', restoreTvBufferLimits);
@@ -204,7 +208,11 @@
         if (!buffer_limits_saved) return;
 
         if (typeof Hls !== 'undefined' && Hls.DefaultConfig) {
-            Hls.DefaultConfig.maxMaxBufferLength = buffer_limits_saved.maxMaxBufferLength;
+            var Default = Hls.DefaultConfig;
+
+            Default.maxMaxBufferLength = buffer_limits_saved.maxMaxBufferLength;
+            Default.maxBufferSize = buffer_limits_saved.maxBufferSize;
+            Default.backBufferLength = buffer_limits_saved.backBufferLength;
         }
 
         buffer_limits_saved = null;
@@ -411,8 +419,6 @@
 
     function preparePlayback(entry, done) {
         var original = entry.master_url || entry.url;
-
-        delete entry.__cutflix_native;
         var native_file = Lampa.Platform.is('tizen') ? fileUrl(entry.file_uuid) : '';
 
         function finish(url) {
@@ -454,14 +460,7 @@
 
         if (needsInnerPlayer()) useInnerPlayer();
 
-        if (native_file) {
-            entry.error = function (data, reserve) {
-                console.log('Cutflix', 'hls failed, switching to native file');
-
-                useNativePlayer();
-                reserve(native_file);
-            };
-        } else delete entry.error;
+        delete entry.error;
 
         loadMasterManifest(entry.video_id, function (text) {
             preheatPlaylist(entry.video_id, text);
