@@ -691,6 +691,7 @@
             '.cutflix-item__error{position:relative;max-width:50em;margin:4em auto;text-align:center}',
             '.cutflix-item__error-text{font-size:1.6em;margin-bottom:1.5em;opacity:.8}',
             '.cutflix-item__retry{display:inline-flex;align-items:center;justify-content:center;font-size:1.3em;padding:.8em 2em}',
+            '.cutflix-catalog .card__title{margin-bottom:1em}',
             '@media (max-width:800px){.cutflix-item{padding:2em}.cutflix-item__inner{flex-direction:column}.cutflix-item__poster{width:14em;max-width:100%;margin-right:0;margin-bottom:2em}.cutflix-item__title{font-size:2em}}'
         ].join('');
 
@@ -732,6 +733,7 @@
 
         component.create = function () {
             var self = this;
+            $(self.render()).addClass('cutflix-catalog');
             this.activity.loader(true);
             load(1, function (data) {
                 self.activity.loader(false);
